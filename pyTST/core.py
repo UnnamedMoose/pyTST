@@ -83,7 +83,7 @@ class pyTST:
             usecols = (signal_column, time_column)
 
         timedata = np.loadtxt(filename, usecols=usecols, **kwargs)
-        
+
         if time_column is None:
             self.signal_array = timedata
             self.time_array = (np.array(range(len(self.signal_array)))+1)*tstep
@@ -126,12 +126,18 @@ class pyTST:
         nb_slices = int(np.ceil(len(data)/step_size))
         print("{} slices to compute".format(nb_slices))
 
-        pool = mp.Pool(processes=nproc)
-        result = pool.map(variance_stats,
-                          [ data[step_size*istart:] for istart in range(nb_slices) ],
-                          chunksize=max(2, int(nb_slices/nproc/10)))
-        pool.close()
-        pool.join()
+        # allow disabling Pool as this does not always work on Windows machines
+        # with a lot of corporate oversight.
+        if nproc == 1:
+            slices = [data[step_size*istart:] for istart in range(nb_slices)]
+            result = [variance_stats(slices[i]) for i in range(len(slices))]
+        else:
+            pool = mp.Pool(processes=nproc)
+            result = pool.map(variance_stats,
+                              [ data[step_size*istart:] for istart in range(nb_slices) ],
+                              chunksize=max(2, int(nb_slices/nproc/10)))
+            pool.close()
+            pool.join()
 
         self.mean_array = [ row[0] for row in result ]
         self.u95_array = [ row[1] for row in result ]
@@ -139,6 +145,22 @@ class pyTST:
 
         if analyse_end:
             self.step_time_array = self.step_time_array[::-1]
+
+    def get_split_index(self):
+        """
+        Return the index at which the signal has converged to within the 95%
+        confidence interval.
+
+        Returns
+        ----------
+        split_index: integer
+            index inside the signal array
+        """
+        index = np.argmin(self.u95_array[-5::-1])+4
+        index = min(index, len(self.u95_array)-2)
+        discard_time = self.step_time_array[-1] - self.step_time_array[index]
+        split_index = np.searchsorted(self.time_array, discard_time)
+        return split_index
 
     def export_to_txt(self, filename):
         """
@@ -181,7 +203,7 @@ class pyTST:
             name of the image file to export the plot to
 
         interactive : bool, optional
-            True if the signal is also ploted and the discarded time is highlighted in orange, 
+            True if the signal is also ploted and the discarded time is highlighted in orange,
             double clicking on the plot will move the cursor and update the signal plot
         """
 
